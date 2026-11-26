@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ODM — Open Download Manager</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232048cf'/><path d='M16 7v12m0 0l-5-5m5 5l5-5M9 25h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ─────────────────────────── menu bar ─────────────────────────── -->
+  <div class="menubar">
+    <div class="brand">
+      <span class="logo">ODM</span>
+      <span class="brand-sub">Open Download Manager</span>
+    </div>
+    <nav class="menu">
+      <button data-menu="tasks">Tasks</button>
+      <button data-menu="queues">Queues</button>
+      <button data-menu="grabber">Site Grabber</button>
+      <button data-menu="options">Options</button>
+      <button data-menu="logs">Log</button>
+    </nav>
+    <div class="conn">
+      <span id="connDot" class="dot"></span>
+      <span id="connText">connecting…</span>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────── toolbar ─────────────────────────── -->
+  <div class="toolbar">
+    <button class="tb" id="btnAdd" title="Add URL (Tasks → Add new download)">
+      <span class="ico">＋</span><span>Add URL</span>
+    </button>
+    <button class="tb" id="btnGrab" title="Site Grabber">
+      <span class="ico">⌗</span><span>Grabber</span>
+    </button>
+    <button class="tb" id="btnStartQueue" title="Start queue (idm /s)">
+      <span class="ico">▶</span><span>Start queue</span>
+    </button>
+    <button class="tb" id="btnStopAll" title="Stop all">
+      <span class="ico">■</span><span>Stop all</span>
+    </button>
+    <button class="tb" id="btnRemove" title="Remove selected">
+      <span class="ico">✕</span><span>Remove</span>
+    </button>
+    <div class="spacer"></div>
+    <div class="speedbox">
+      <span class="speedval" id="totalSpeed">0 B/s</span>
+      <span class="speedlbl" id="activeCount">idle</span>
+    </div>
+    <button class="tb" id="btnSettings" title="Options">
+      <span class="ico">⚙</span><span>Options</span>
+    </button>
+  </div>
+
+  <!-- ─────────────────────────── body ─────────────────────────── -->
+  <div class="body">
+
+    <aside class="sidebar">
+      <div class="catlist" id="catList"></div>
+      <div class="sidebar-foot">
+        <div class="sfrow"><span>Connections</span><b id="sfConns">8</b></div>
+        <div class="sfrow"><span>Concurrent files</span><b id="sfConc">3</b></div>
+        <div class="sfrow"><span>Save to</span><b class="ellip" id="sfDir">—</b></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="tablehead">
+        <div class="c-file">File name</div>
+        <div class="c-status">Status</div>
+        <div class="c-size">Size</div>
+        <div class="c-prog">Progress</div>
+        <div class="c-speed">Speed</div>
+        <div class="c-eta">Time left</div>
+        <div class="c-desc">Description</div>
+      </div>
+      <div class="rows" id="rows"></div>
+      <div class="empty" id="empty">
+        <div class="empty-ico">⤓</div>
+        <p>No downloads yet.</p>
+        <button class="btn primary" id="emptyAdd">Add a URL</button>
+      </div>
+
+      <!-- selected-task detail: segment map, mirroring IDM's progress legend -->
+      <section class="detail" id="detail" hidden>
+        <div class="detail-head">
+          <b id="dName">—</b>
+          <button class="mini" id="dClose">✕</button>
+        </div>
+        <div class="segbar" id="segbar"></div>
+        <div class="legend">
+          <span><i class="lg lg-done"></i>downloaded</span>
+          <span><i class="lg lg-pend"></i>pending</span>
+          <span><i class="lg lg-start"></i>segment start</span>
+        </div>
+        <dl class="kv" id="dInfo"></dl>
+      </section>
+    </main>
+  </div>
+
+  <!-- ─────────────────────────── status bar ─────────────────────────── -->
+  <div class="statusbar">
+    <span id="statusMsg">Ready</span>
+    <span class="grow"></span>
+    <span id="statusStats">0 files</span>
+    <span class="sep">|</span>
+    <span id="statusPort">—</span>
+  </div>
+</div>
+
+<!-- ─────────────────────────── Add URL dialog ─────────────────────────── -->
+<div class="modal-wrap" id="addModal" hidden>
+  <div class="modal">
+    <div class="modal-title">Download File Info <button class="mini" data-close>✕</button></div>
+    <div class="modal-body">
+      <label>URL
+        <input id="addUrl" type="text" placeholder="https://example.com/file.zip" autofocus>
+      </label>
+      <label>Save to
+        <span class="row-inline">
+          <input id="addDir" type="text">
+          <button class="btn" id="addBrowse">…</button>
+        </span>
+      </label>
+      <label>File name
+        <input id="addName" type="text" placeholder="(from server)">
+      </label>
+      <label>Description / referer
+        <input id="addRef" type="text" placeholder="(optional)">
+      </label>
+      <div class="grid2">
+        <label>Category
+          <input id="addCat" type="text" value="General">
+        </label>
+        <label>Queue
+          <input id="addQueue" type="text" value="main">
+        </label>
+      </div>
+      <label class="chk"><input id="addSilent" type="checkbox"> Start later (queue only, like <code>/a</code>)</label>
+      <div class="hint" id="addHint"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="addOk">Start Download</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────── Options dialog ─────────────────────────── -->
+<div class="modal-wrap" id="optModal" hidden>
+  <div class="modal wide">
+    <div class="modal-title">Options <button class="mini" data-close>✕</button></div>
+    <div class="tabs" id="optTabs">
+      <button class="tab active" data-tab="connection">Connection</button>
+      <button class="tab" data-tab="saveto">Save To</button>
+      <button class="tab" data-tab="filetypes">File Types</button>
+      <button class="tab" data-tab="proxy">Proxy</button>
+    </div>
+    <div class="modal-body">
+      <div class="tabpane active" data-pane="connection">
+        <label>Default number of connections
+          <input id="optConns" type="number" min="1" max="32">
+        </label>
+        <label>Maximum concurrent downloads
+          <input id="optConc" type="number" min="1" max="16">
+        </label>
+        <label>Minimum segment size (bytes)
+          <input id="optMinSeg" type="number" min="65536" step="65536">
+        </label>
+        <label>Speed limit (KB/s, 0 = unlimited)
+          <input id="optSpeed" type="number" min="0">
+        </label>
+        <label>Timeout (seconds)
+          <input id="optTimeout" type="number" min="5">
+        </label>
+        <label>Max retries per segment
+          <input id="optRetries" type="number" min="1">
+        </label>
+        <label>User-Agent
+          <input id="optUA" type="text">
+        </label>
+        <label class="chk"><input id="optIgnoreMod" type="checkbox"> Ignore file modification time changes</label>
+      </div>
+      <div class="tabpane" data-pane="saveto">
+        <label>Default download directory
+          <input id="optDir" type="text">
+        </label>
+        <label>Temporary directory (part files + resume records)
+          <input id="optTemp" type="text">
+        </label>
+        <label>Offline bridge port (browser extension)
+          <input id="optPort" type="number" min="1024" max="65535">
+        </label>
+        <label class="chk"><input id="optClip" type="checkbox"> Monitor the clipboard for download links</label>
+      </div>
+      <div class="tabpane" data-pane="filetypes">
+        <label>Automatically start downloading these file types
+          <textarea id="optAuto" rows="7" placeholder="zip, rar, 7z, exe…"></textarea>
+        </label>
+        <label>Do not start downloading from these sites (<code>*</code> wildcards)
+          <textarea id="optExSites" rows="3"></textarea>
+        </label>
+        <label>Do not start from these addresses
+          <textarea id="optExAddr" rows="3"></textarea>
+        </label>
+      </div>
+      <div class="tabpane" data-pane="proxy">
+        <label class="chk"><input id="optProxyEnable" type="checkbox"> Use proxy / SOCKS</label>
+        <div class="grid2">
+          <label>HTTP proxy host<input id="optHttpProxy" type="text"></label>
+          <label>Port<input id="optHttpPort" type="number"></label>
+          <label>User<input id="optHttpUser" type="text"></label>
+          <label>Password<input id="optHttpPass" type="password"></label>
+        </div>
+        <div class="grid2">
+          <label>SOCKS host<input id="optSocksHost" type="text"></label>
+          <label>Port<input id="optSocksPort" type="number"></label>
+          <label>SOCKS version<input id="optSocksType" type="number" min="4" max="5"></label>
+          <label class="chk"><input id="optSocksEnable" type="checkbox"> Enable SOCKS</label>
+        </div>
+        <div class="hint">Segment requests keep <code>Accept-Encoding: identity</code>; the proxy must not re-compress bodies.</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="optSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────── Grabber dialog ─────────────────────────── -->
+<div class="modal-wrap" id="grabModal" hidden>
+  <div class="modal wide">
+    <div class="modal-title">Site Grabber <button class="mini" data-close>✕</button></div>
+    <div class="modal-body">
+      <label>Start page
+        <input id="gStart" type="text" placeholder="https://example.com/downloads/">
+      </label>
+      <div class="grid2">
+        <label>Link levels to follow<input id="gDepth" type="number" min="0" max="6" value="1"></label>
+        <label>Maximum files<input id="gMax" type="number" min="1" value="200"></label>
+      </div>
+      <label>File filters (comma separated, <code>*</code> wildcards, <code>&lt;start page&gt;</code> allowed)
+        <input id="gFilter" type="text" value="*.zip, *.rar, *.7z">
+      </label>
+      <div class="grid2">
+        <label>Minimum size (e.g. 100k)<input id="gMin" type="text" value=""></label>
+        <label>Maximum size (e.g. 2GB)<input id="gMaxSize" type="text" value=""></label>
+      </div>
+      <label>Include paths (wildcards)<input id="gInc" type="text" placeholder="*/downloads/*"></label>
+      <label>Exclude paths (wildcards)<input id="gExc" type="text" placeholder="*/private/*"></label>
+      <label class="chk"><input id="gSameSite" type="checkbox" checked> Stay on the start page's site</label>
+      <div class="results" id="grabResults"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close>Close</button>
+      <button class="btn" id="grabRun">Scan</button>
+      <button class="btn primary" id="grabAdd" disabled>Add matches to queue</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────── Log drawer ─────────────────────────── -->
+<div class="logdrawer" id="logDrawer" hidden>
+  <div class="loghead">Protocol log <button class="mini" id="logClose">✕</button></div>
+  <pre id="logBody"></pre>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
