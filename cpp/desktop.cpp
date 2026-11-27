@@ -3,7 +3,9 @@
 #include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QSet>
 #include <QUrl>
+#include <QWindow>
 #include <algorithm>
 #include <cmath>
 #include <future>
@@ -18,6 +20,8 @@ namespace {
 
 constexpr unsigned kConnections = 8;
 constexpr int kCardHeight = 84;
+constexpr int kFrameMargin = 10;
+constexpr int kCornerRadius = 14;
 
 enum class State { Queued, Running, Paused, Done, Failed };
 
@@ -63,62 +67,81 @@ QString sanitise(QString name) {
 }
 QString defaultFolder() { return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation); }
 
-QString themeStyleSheet(const Theme& t) {
-    return QStringLiteral(R"(
+QString themeStyleSheet(const Theme& t, int radius) {
+    QString sheet = QStringLiteral(R"(
 * { font-family: "Segoe UI", "Inter", sans-serif; }
-QWidget#root { background: %1; }
-QFrame#header { background: %2; border-bottom: 1px solid %3; }
-QFrame#strip { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %6, stop:1 #7C5CFF); border: none; }
-QFrame#panel, QFrame#detail { background: %2; border: 1px solid %3; border-radius: 14px; }
-QLabel#wordmark { color: %4; font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
-QLabel#tagline { color: %5; font-size: 12px; }
+QWidget#root { background: transparent; }
+QFrame#header {
+    background: @surface@; border-top: 3px solid @accent@; border-bottom: 1px solid @border@;
+    border-top-left-radius: @radius@px; border-top-right-radius: @radius@px;
+}
+QFrame#panel, QFrame#detail { background: @surface@; border: 1px solid @border@; border-radius: 14px; }
+QPushButton#winBtn, QPushButton#winClose {
+    background: transparent; border: none; border-radius: 7px;
+    color: @muted@; font-size: 12px; font-weight: 600; padding: 0;
+}
+QPushButton#winBtn:hover { background: @hover@; color: @text@; }
+QPushButton#winBtn:pressed { background: @select@; }
+QPushButton#winClose:hover { background: #E5484D; color: #FFFFFF; }
+QPushButton#winClose:pressed { background: #C62F35; color: #FFFFFF; }
+QLabel#wordmark { color: @text@; font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
+QLabel#tagline { color: @muted@; font-size: 12px; }
 QLabel#logo {
-    background: %6; color: #FFFFFF; border-radius: 10px;
+    background: @accent@; color: #FFFFFF; border-radius: 10px;
     font-size: 14px; font-weight: 700; letter-spacing: 0.5px;
 }
-QLabel#sectionTitle { color: %5; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
-QLabel#detailName { color: %4; font-size: 15px; font-weight: 600; }
-QLabel#detailHost { color: %5; font-size: 12px; }
-QLabel#key { color: %5; font-size: 12px; }
-QLabel#value { color: %4; font-size: 12px; }
-QLabel#empty { color: %5; font-size: 14px; }
-QLabel#emptyTitle { color: %4; font-size: 18px; font-weight: 600; }
-QLabel#footer { color: %5; font-size: 12px; }
+QLabel#sectionTitle { color: @muted@; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+QLabel#detailName { color: @text@; font-size: 15px; font-weight: 600; }
+QLabel#detailHost { color: @muted@; font-size: 12px; }
+QLabel#key { color: @muted@; font-size: 12px; }
+QLabel#value { color: @text@; font-size: 12px; }
+QLabel#empty { color: @muted@; font-size: 14px; }
+QLabel#emptyTitle { color: @text@; font-size: 18px; font-weight: 600; }
+QLabel#footer { color: @muted@; font-size: 12px; }
 QLineEdit#search {
-    background: %8; border: 1px solid %3; border-radius: 9px; padding: 7px 12px;
-    color: %4; font-size: 13px; selection-background-color: %6;
+    background: @alt@; border: 1px solid @border@; border-radius: 9px; padding: 7px 12px;
+    color: @text@; font-size: 13px; selection-background-color: @accent@;
 }
-QLineEdit#search:focus { border: 1px solid %6; background: %2; }
+QLineEdit#search:focus { border: 1px solid @accent@; background: @surface@; }
 QPushButton {
-    background: transparent; color: %4; border: 1px solid %3; border-radius: 9px;
+    background: transparent; color: @text@; border: 1px solid @border@; border-radius: 9px;
     padding: 7px 14px; font-size: 13px; font-weight: 500;
 }
-QPushButton:hover { background: %7; border-color: %3; }
-QPushButton:pressed { background: %9; }
+QPushButton:hover { background: @hover@; border-color: @border@; }
+QPushButton:pressed { background: @select@; }
 QPushButton#primary {
-    background: %6; color: #FFFFFF; border: 1px solid %6; font-weight: 600; padding: 8px 18px;
+    background: @accent@; color: #FFFFFF; border: 1px solid @accent@; font-weight: 600; padding: 8px 18px;
 }
-QPushButton#primary:hover { background: %10; border-color: %10; }
+QPushButton#primary:hover { background: @accentHover@; border-color: @accentHover@; }
 QPushButton#ghost { padding: 7px 10px; }
 QListView#list { background: transparent; border: none; outline: none; }
 QListView#side { background: transparent; border: none; outline: none; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 4px 2px 4px 0; }
-QScrollBar::handle:vertical { background: %3; border-radius: 4px; min-height: 30px; }
-QScrollBar::handle:vertical:hover { background: %5; }
+QScrollBar::handle:vertical { background: @border@; border-radius: 4px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: @muted@; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-QFrame#footer { background: %2; border-top: 1px solid %3; }
-QFrame#divider { background: %3; max-width: 1px; border: none; }
-QDialog { background: %2; }
-QSpinBox, QLineEdit#field {
-    background: %8; border: 1px solid %3; border-radius: 9px; padding: 7px 10px;
-    color: %4; font-size: 13px; selection-background-color: %6;
+QFrame#footer {
+    background: @surface@; border-top: 1px solid @border@;
+    border-bottom-left-radius: @radius@px; border-bottom-right-radius: @radius@px;
 }
-QSpinBox:focus, QLineEdit#field:focus { border: 1px solid %6; background: %2; }
-QToolTip { background: %2; color: %4; border: 1px solid %3; padding: 4px 8px; }
-)")
-        .arg(t.bg.name(), t.surface.name(), t.border.name(), t.text.name(), t.muted.name(),
-             t.accent.name(), t.hover.name(), t.surfaceAlt.name(), t.select.name(), t.accentHover.name());
+QFrame#divider { background: @border@; max-width: 1px; border: none; }
+QDialog { background: @surface@; }
+QSpinBox, QLineEdit#field {
+    background: @alt@; border: 1px solid @border@; border-radius: 9px; padding: 7px 10px;
+    color: @text@; font-size: 13px; selection-background-color: @accent@;
+}
+QSpinBox:focus, QLineEdit#field:focus { border: 1px solid @accent@; background: @surface@; }
+QToolTip { background: @surface@; color: @text@; border: 1px solid @border@; padding: 4px 8px; }
+)");
+    const std::pair<const char*, QColor> tokens[] = {
+        {"@bg@", t.bg},        {"@surface@", t.surface}, {"@border@", t.border},
+        {"@text@", t.text},    {"@muted@", t.muted},     {"@accent@", t.accent},
+        {"@hover@", t.hover},  {"@alt@", t.surfaceAlt},  {"@select@", t.select},
+        {"@accentHover@", t.accentHover}};
+    for (const auto& [token, color] : tokens) sheet.replace(QLatin1String(token), color.name());
+    sheet.replace(QStringLiteral("@radius@"), QString::number(radius));
+    return sheet;
 }
 
 }  // namespace
@@ -504,6 +527,9 @@ public:
     explicit Window(bool dark) : m_theme(dark ? Theme::dark() : Theme::light()) {
         m_dark = dark;
         setWindowTitle("ODM — Open Download Manager");
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+        setAttribute(Qt::WA_TranslucentBackground, true);
+        setMouseTracking(true);
         setMinimumSize(900, 580);
         resize(1180, 720);
         build();
@@ -547,11 +573,10 @@ private:
     void build() {
         auto* root = new QWidget;
         root->setObjectName("root");
-        auto* outer = new QVBoxLayout(root);
-        outer->setContentsMargins(0, 0, 0, 0);
-        outer->setSpacing(0);
-        outer->addWidget(buildStrip());
-        outer->addWidget(buildHeader());
+        m_outer = new QVBoxLayout(root);
+        m_outer->setContentsMargins(kFrameMargin, kFrameMargin, kFrameMargin, kFrameMargin);
+        m_outer->setSpacing(0);
+        m_outer->addWidget(buildHeader());
 
         auto* body = new QHBoxLayout;
         body->setContentsMargins(16, 16, 16, 12);
@@ -559,16 +584,130 @@ private:
         body->addWidget(buildSidebar());
         body->addWidget(buildList(), 1);
         body->addWidget(buildDetail());
-        outer->addLayout(body, 1);
-        outer->addWidget(buildFooter());
+        m_outer->addLayout(body, 1);
+        m_outer->addWidget(buildFooter());
         setCentralWidget(root);
     }
 
-    QWidget* buildStrip() {
-        auto* strip = new QFrame;
-        strip->setObjectName("strip");
-        strip->setFixedHeight(3);
-        return strip;
+    int frameRadius() const { return m_maximized ? 0 : kCornerRadius; }
+
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF card = QRectF(rect()).adjusted(kFrameMargin, kFrameMargin, -kFrameMargin, -kFrameMargin);
+        const qreal radius = frameRadius();
+        const bool light = m_theme.bg.lightness() > 128;
+        if (!m_maximized) {
+            for (int i = 6; i >= 1; --i) {
+                QColor shade(24, 34, 56);
+                shade.setAlpha(light ? 7 : 20);
+                p.setPen(Qt::NoPen);
+                p.setBrush(shade);
+                p.drawRoundedRect(card.adjusted(-i * 0.7, i * 0.4, i * 0.7, i * 1.0), radius + i, radius + i);
+            }
+        }
+        p.setPen(QPen(m_theme.border, 1));
+        p.setBrush(m_theme.bg);
+        p.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    }
+
+public:
+    QPixmap snapshot() {
+        const QPixmap shot = grab();
+        QPixmap flat(shot.size());
+        flat.setDevicePixelRatio(shot.devicePixelRatio());
+        flat.fill(m_theme.bg);
+        QPainter p(&flat);
+        p.drawPixmap(0, 0, shot);
+        return flat;
+    }
+
+private:
+    void changeEvent(QEvent* event) override {
+        if (event->type() == QEvent::WindowStateChange) syncFrameState();
+        QMainWindow::changeEvent(event);
+    }
+
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (m_dragAreas.contains(watched)) {
+            if (event->type() == QEvent::MouseButtonPress) {
+                auto* press = static_cast<QMouseEvent*>(event);
+                if (press->button() == Qt::LeftButton) {
+                    if (auto* handle = windowHandle()) handle->startSystemMove();
+                    return true;
+                }
+            } else if (event->type() == QEvent::MouseButtonDblClick) {
+                toggleMaximize();
+                return true;
+            }
+        }
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override {
+#ifdef Q_OS_WIN
+        if (type == "windows_generic_MSG" || type == "windows_dispatcher_MSG") {
+            MSG* msg = static_cast<MSG*>(message);
+            if (msg->message == WM_GETMINMAXINFO) {
+                auto* info = reinterpret_cast<MINMAXINFO*>(msg->lParam);
+                const HMONITOR monitor = MonitorFromWindow(msg->hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{};
+                mi.cbSize = sizeof(MONITORINFO);
+                if (GetMonitorInfoW(monitor, &mi)) {
+                    info->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+                    info->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+                    info->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+                    info->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                    *result = 0;
+                    return true;
+                }
+            }
+        }
+#endif
+        return QMainWindow::nativeEvent(type, message, result);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            const Qt::Edges edges = edgesAt(event->position().toPoint());
+            if (edges) {
+                m_resizeEdges = edges;
+                m_resizeStart = event->globalPosition().toPoint();
+                m_resizeGeometry = geometry();
+                return;
+            }
+        }
+        QMainWindow::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (m_resizeEdges) {
+            const QPoint delta = event->globalPosition().toPoint() - m_resizeStart;
+            QRect next = m_resizeGeometry;
+            if (m_resizeEdges & Qt::LeftEdge) next.setLeft(next.left() + delta.x());
+            if (m_resizeEdges & Qt::RightEdge) next.setRight(next.right() + delta.x());
+            if (m_resizeEdges & Qt::TopEdge) next.setTop(next.top() + delta.y());
+            if (m_resizeEdges & Qt::BottomEdge) next.setBottom(next.bottom() + delta.y());
+            const QSize floor = minimumSize();
+            if (next.width() < floor.width()) {
+                if (m_resizeEdges & Qt::LeftEdge) next.setLeft(next.right() - floor.width());
+                else next.setRight(next.left() + floor.width());
+            }
+            if (next.height() < floor.height()) {
+                if (m_resizeEdges & Qt::TopEdge) next.setTop(next.bottom() - floor.height());
+                else next.setBottom(next.top() + floor.height());
+            }
+            setGeometry(next);
+            return;
+        }
+        updateCursor(event->position().toPoint());
+        QMainWindow::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        m_resizeEdges = {};
+        updateCursor(event->position().toPoint());
+        QMainWindow::mouseReleaseEvent(event);
     }
 
     QWidget* buildHeader() {
@@ -626,6 +765,38 @@ private:
         add->setShortcut(QKeySequence::New);
         connect(add, &QPushButton::clicked, this, [this] { addDialog(); });
         layout->addWidget(add);
+
+        auto* minimize = new QPushButton(QStringLiteral("–"));
+        minimize->setObjectName("winBtn");
+        minimize->setFixedSize(30, 30);
+        minimize->setCursor(Qt::PointingHandCursor);
+        minimize->setToolTip("Minimize");
+        connect(minimize, &QPushButton::clicked, this, &QWidget::showMinimized);
+
+        m_maxButton = new QPushButton(QStringLiteral("□"));
+        m_maxButton->setObjectName("winBtn");
+        m_maxButton->setFixedSize(30, 30);
+        m_maxButton->setCursor(Qt::PointingHandCursor);
+        m_maxButton->setToolTip("Maximize");
+        connect(m_maxButton, &QPushButton::clicked, this, [this] { toggleMaximize(); });
+
+        auto* closeButton = new QPushButton(QStringLiteral("✕"));
+        closeButton->setObjectName("winClose");
+        closeButton->setFixedSize(30, 30);
+        closeButton->setCursor(Qt::PointingHandCursor);
+        closeButton->setToolTip("Close");
+        connect(closeButton, &QPushButton::clicked, this, [this] { close(); });
+
+        layout->addSpacing(10);
+        layout->addWidget(minimize);
+        layout->addWidget(m_maxButton);
+        layout->addWidget(closeButton);
+
+        for (QObject* area : {static_cast<QObject*>(header), static_cast<QObject*>(logo),
+                              static_cast<QObject*>(wordmark), static_cast<QObject*>(tagline)}) {
+            area->installEventFilter(this);
+            m_dragAreas.insert(area);
+        }
         return header;
     }
 
@@ -835,8 +1006,54 @@ private:
         return footer;
     }
 
+    void toggleMaximize() {
+        if (isMaximized()) showNormal();
+        else showMaximized();
+    }
+
+    void syncFrameState() {
+        m_maximized = isMaximized() || isFullScreen();
+        const int margin = m_maximized ? 0 : kFrameMargin;
+        if (m_outer) m_outer->setContentsMargins(margin, margin, margin, margin);
+        if (m_maxButton) {
+            m_maxButton->setText(m_maximized ? QStringLiteral("❐") : QStringLiteral("□"));
+            m_maxButton->setToolTip(m_maximized ? QStringLiteral("Restore") : QStringLiteral("Maximize"));
+        }
+        qApp->setStyleSheet(themeStyleSheet(m_theme, frameRadius()));
+        update();
+    }
+
+    Qt::Edges edgesAt(const QPoint& pos) const {
+        if (m_maximized) return {};
+        const int band = kFrameMargin + 1;
+        Qt::Edges edges;
+        if (pos.x() <= band) edges |= Qt::LeftEdge;
+        if (pos.x() >= width() - band - 1) edges |= Qt::RightEdge;
+        if (pos.y() <= band) edges |= Qt::TopEdge;
+        if (pos.y() >= height() - band - 1) edges |= Qt::BottomEdge;
+        return edges;
+    }
+
+    void updateCursor(const QPoint& pos) {
+        const Qt::Edges edges = edgesAt(pos);
+        if (edges == (Qt::LeftEdge | Qt::TopEdge) || edges == (Qt::RightEdge | Qt::BottomEdge))
+            setCursor(Qt::SizeFDiagCursor);
+        else if (edges == (Qt::RightEdge | Qt::TopEdge) || edges == (Qt::LeftEdge | Qt::BottomEdge))
+            setCursor(Qt::SizeBDiagCursor);
+        else if (edges & (Qt::LeftEdge | Qt::RightEdge))
+            setCursor(Qt::SizeHorCursor);
+        else if (edges & (Qt::TopEdge | Qt::BottomEdge))
+            setCursor(Qt::SizeVerCursor);
+        else
+            unsetCursor();
+    }
+
     void applyTheme() {
-        qApp->setStyleSheet(themeStyleSheet(m_theme));
+        qApp->setStyleSheet(themeStyleSheet(m_theme, frameRadius()));
+        if (const QString dump = qEnvironmentVariable("ODM_QSS_DUMP"); !dump.isEmpty()) {
+            QFile file(dump);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(qApp->styleSheet().toUtf8());
+        }
 #ifdef Q_OS_WIN
         if (HWND hwnd = reinterpret_cast<HWND>(winId())) {
             using Pfn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
@@ -1070,6 +1287,13 @@ private:
     Theme m_theme;
     bool m_dark = false;
     bool m_closing = false;
+    bool m_maximized = false;
+    Qt::Edges m_resizeEdges;
+    QPoint m_resizeStart;
+    QRect m_resizeGeometry;
+    QVBoxLayout* m_outer = nullptr;
+    QPushButton* m_maxButton = nullptr;
+    QSet<QObject*> m_dragAreas;
     unsigned m_connections = kConnections;
     QTimer m_timer;
 
@@ -1108,11 +1332,14 @@ int main(int argc, char** argv) {
     QStringList urls;
     QString output;
     QString shot;
+    bool startMaximized = false;
     bool dark = false;
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == "--dark") {
             dark = true;
+        } else if (arg == "--maximized") {
+            startMaximized = true;
         } else if (arg == "--screenshot" && i + 1 < argc) {
             shot = QString::fromLocal8Bit(argv[++i]);
         } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
@@ -1124,6 +1351,7 @@ int main(int argc, char** argv) {
 
     Window window(dark);
     window.show();
+    if (startMaximized) window.showMaximized();
     for (const auto& url : urls) {
         const QUrl parsed(url, QUrl::StrictMode);
         auto destination = output;
@@ -1132,7 +1360,7 @@ int main(int argc, char** argv) {
     }
     if (!shot.isEmpty()) {
         QTimer::singleShot(2500, &window, [&window, shot] {
-            window.grab().save(shot);
+            window.snapshot().save(shot);
             QCoreApplication::quit();
         });
     }
