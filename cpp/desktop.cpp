@@ -502,9 +502,11 @@ public:
 
     void accept() override {
         const QUrl parsed(url(), QUrl::StrictMode);
-        if (!parsed.isValid() || parsed.host().isEmpty() || !parsed.userInfo().isEmpty() ||
-            (parsed.scheme() != "http" && parsed.scheme() != "https")) {
-            QMessageBox::warning(this, "Invalid URL", "Enter an HTTP or HTTPS URL without embedded credentials.");
+        if (!parsed.isValid() || parsed.host().isEmpty() ||
+            !(parsed.scheme() == "http" || parsed.scheme() == "https" || parsed.scheme() == "ftp") ||
+            (parsed.scheme() != "ftp" && !parsed.userInfo().isEmpty())) {
+            QMessageBox::warning(this, "Invalid URL",
+                                 "Enter an http://, https:// or ftp:// URL. HTTP URLs cannot embed credentials.");
             return;
         }
         if (destination().isEmpty()) {
@@ -728,7 +730,7 @@ private:
         titles->setSpacing(0);
         auto* wordmark = new QLabel("Open Download Manager");
         wordmark->setObjectName("wordmark");
-        auto* tagline = new QLabel("Multi-connection HTTP / HTTPS transfers");
+        auto* tagline = new QLabel("HTTP / HTTPS segmented · FTP resumed");
         tagline->setObjectName("tagline");
         titles->addWidget(wordmark);
         titles->addWidget(tagline);
@@ -842,7 +844,7 @@ private:
         layout->addWidget(heading);
         layout->addWidget(m_side);
         layout->addStretch();
-        auto* hint = new QLabel("HTTP / HTTPS\nResume supported");
+        auto* hint = new QLabel("HTTP / HTTPS / FTP\nResume supported");
         hint->setObjectName("tagline");
         hint->setContentsMargins(10, 0, 0, 0);
         layout->addWidget(hint);

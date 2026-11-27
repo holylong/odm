@@ -1,20 +1,24 @@
 #include "core.h"
+#include "ftp.h"
+#include "mms.h"
+#include "rtmp.h"
+#include "util.h"
 #include <windows.h>
 #include <winhttp.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdlib>
 #include <cwchar>
 #include <fstream>
 #include <mutex>
-#include <stdexcept>
 #include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
 namespace odm {
 namespace {
-using Size = std::uint64_t;
-void check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
+// ─── HTTP(S) ────────────────────────────────────────────────────────────────
 struct Handle {
     HINTERNET value;
     explicit Handle(HINTERNET h) : value(h) {
@@ -69,7 +73,7 @@ struct Request {
     }
 };
 std::wstring span(Size first, Size last) { return std::to_wstring(first) + L"-" + std::to_wstring(last); }
-void stream(Request& r, const fs::path& file, bool append, Size limit, Progress& p, const std::atomic<bool>& failed) {
+void streamHttps(Request& r, const fs::path& file, bool append, Size limit, Progress& p, const std::atomic<bool>& failed) {
     std::ofstream out(file, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
     check(bool(out), "Cannot open partial file");
     std::array<char, 65536> buffer;
@@ -87,24 +91,11 @@ void stream(Request& r, const fs::path& file, bool append, Size limit, Progress&
     check(bool(out), "Cannot close partial file");
     check(p.pause || failed || !limit || limit > INT64_MAX, "Response ended before all bytes arrived");
 }
-}
 
-bool download(const std::wstring& url, const fs::path& destination, unsigned connections, Progress& p) {
-    check(!fs::exists(destination), "Destination already exists");
-    p.total = p.received = 0;
+void httpDownload(const std::wstring& url, const fs::path& result, unsigned connections, Progress& p) {
     Endpoint endpoint(url);
     Handle session(WinHttpOpen(L"ODM/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0));
     check(WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000), "Cannot set HTTP timeouts");
-    auto stage = destination;
-    stage += L".odm-work";
-    // Hold an exclusive lock across all requests and assembly, including other processes.
-    fs::create_directory(stage);
-    const auto lockPath = stage / L"lock";
-    const auto lock = CreateFileW(lockPath.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
-                                  FILE_FLAG_DELETE_ON_CLOSE | FILE_ATTRIBUTE_NORMAL, nullptr);
-    check(lock != INVALID_HANDLE_VALUE, "Destination is already being downloaded");
-    struct Unlock { HANDLE h; ~Unlock() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); } } guard{lock};
-    auto result = stage / L"result";
     Size total = 0;
     std::wstring etag;
     bool ranged = false;
@@ -120,74 +111,101 @@ bool download(const std::wstring& url, const fs::path& destination, unsigned con
         // Without a strong validator, don't combine independently fetched representations.
         ranged = ranged && !etag.empty();
     }
-    if (p.pause) return false;
+    if (p.pause) return;
     std::atomic<bool> failed{false};
     std::vector<fs::path> parts;
+    auto stage = result.parent_path();
     if (!ranged) {
         Request r(session, endpoint, L"");
         if (r.status != 200) throw std::runtime_error("HTTP " + std::to_string(r.status));
         auto length = r.header(WINHTTP_QUERY_CONTENT_LENGTH);
         if (!length.empty()) total = std::stoull(length);
         p.total = total;
-        stream(r, result, false, length.empty() ? UINT64_MAX : total, p, failed);
-    } else {
-        p.total = total;
-        const auto count = unsigned(std::min<Size>(std::clamp(connections, 1u, 16u), 1 + (total - 1) / 262144));
-        const auto key = url + L"\n" + etag + L"\n" + std::to_wstring(total) + L"\n" + std::to_wstring(count);
-        const std::string bytes(reinterpret_cast<const char*>(key.data()), key.size() * sizeof(wchar_t));
-        const auto meta = stage / L"identity";
-        std::string saved(bytes.size() + 1, '\0');
-        { std::ifstream in(meta, std::ios::binary); in.read(saved.data(), saved.size()); saved.resize(size_t(in.gcount())); }
-        for (unsigned i = 0; i < count; ++i) parts.push_back(stage / (L"part-" + std::to_wstring(i)));
-        if (saved != bytes) {
-            for (unsigned i = 0; i < 16; ++i) fs::remove(stage / (L"part-" + std::to_wstring(i)));
-            std::ofstream out(meta, std::ios::binary | std::ios::trunc);
-            out << bytes;
-            out.close();
-            check(bool(out), "Cannot save resume metadata");
-        }
-        std::mutex mutex;
-        std::exception_ptr error;
-        std::vector<std::thread> workers;
-        auto work = [&](unsigned i) {
-            try {
-                const Size start = (total / count) * i;
-                const Size end = i + 1 == count ? total : start + total / count;
-                const auto& part = parts[i];
-                Size done = fs::exists(part) ? fs::file_size(part) : 0;
-                if (done > end - start) { fs::remove(part); done = 0; }
-                p.received += done;
-                if (done == end - start || p.pause || failed) return;
-                auto range = span(start + done, end - 1);
-                Request r(session, endpoint, L"Range: bytes=" + range + L"\r\nIf-Match: " + etag + L"\r\n");
-                check(r.status == 206 && r.header(WINHTTP_QUERY_ETAG) == etag &&
-                      r.header(WINHTTP_QUERY_CONTENT_RANGE) == L"bytes " + range + L"/" + std::to_wstring(total),
-                      "Server changed the file or refused the byte range; retry");
-                stream(r, part, true, end - start - done, p, failed);
-            } catch (...) {
-                failed = true;
-                std::lock_guard<std::mutex> hold(mutex);
-                if (!error) error = std::current_exception();
-            }
-        };
-        try { for (unsigned i = 0; i < count; ++i) workers.emplace_back(work, i); }
-        catch (...) { failed = true; for (auto& t : workers) t.join(); throw; }
-        for (auto& t : workers) t.join();
-        if (p.pause) return false;
-        if (error) std::rethrow_exception(error);
-        std::ofstream out(result, std::ios::binary | std::ios::trunc);
-        check(bool(out), "Cannot assemble output");
-        std::array<char, 65536> buffer;
-        for (const auto& part : parts) {
-            std::ifstream in(part, std::ios::binary);
-            check(bool(in), "Cannot read partial file");
-            while (!p.pause && in.read(buffer.data(), buffer.size()).gcount()) out.write(buffer.data(), in.gcount());
-            if (p.pause) return false;
-            check(in.eof() && !in.bad() && bool(out), "Assembly failed");
-        }
-        out.close();
-        check(bool(out) && fs::file_size(result) == total, "Assembled file has incorrect length");
+        streamHttps(r, result, false, length.empty() ? UINT64_MAX : total, p, failed);
+        return;
     }
+    p.total = total;
+    const auto count = unsigned(std::min<Size>(std::clamp(connections, 1u, 16u), 1 + (total - 1) / 262144));
+    const auto key = url + L"\n" + etag + L"\n" + std::to_wstring(total) + L"\n" + std::to_wstring(count);
+    const std::string bytes(reinterpret_cast<const char*>(key.data()), key.size() * sizeof(wchar_t));
+    const auto meta = stage / L"identity";
+    std::string saved(bytes.size() + 1, '\0');
+    { std::ifstream in(meta, std::ios::binary); in.read(saved.data(), saved.size()); saved.resize(size_t(in.gcount())); }
+    for (unsigned i = 0; i < count; ++i) parts.push_back(stage / (L"part-" + std::to_wstring(i)));
+    if (saved != bytes) {
+        for (unsigned i = 0; i < 16; ++i) fs::remove(stage / (L"part-" + std::to_wstring(i)));
+        std::ofstream out(meta, std::ios::binary | std::ios::trunc);
+        out << bytes;
+        out.close();
+        check(bool(out), "Cannot save resume metadata");
+    }
+    std::mutex mutex;
+    std::exception_ptr error;
+    std::vector<std::thread> workers;
+    auto work = [&](unsigned i) {
+        try {
+            const Size start = (total / count) * i;
+            const Size end = i + 1 == count ? total : start + total / count;
+            const auto& part = parts[i];
+            Size done = fs::exists(part) ? fs::file_size(part) : 0;
+            if (done > end - start) { fs::remove(part); done = 0; }
+            p.received += done;
+            if (done == end - start || p.pause || failed) return;
+            auto range = span(start + done, end - 1);
+            Request r(session, endpoint, L"Range: bytes=" + range + L"\r\nIf-Match: " + etag + L"\r\n");
+            check(r.status == 206 && r.header(WINHTTP_QUERY_ETAG) == etag &&
+                  r.header(WINHTTP_QUERY_CONTENT_RANGE) == L"bytes " + range + L"/" + std::to_wstring(total),
+                  "Server changed the file or refused the byte range; retry");
+            streamHttps(r, part, true, end - start - done, p, failed);
+        } catch (...) {
+            failed = true;
+            std::lock_guard<std::mutex> hold(mutex);
+            if (!error) error = std::current_exception();
+        }
+    };
+    try { for (unsigned i = 0; i < count; ++i) workers.emplace_back(work, i); }
+    catch (...) { failed = true; for (auto& t : workers) t.join(); throw; }
+    for (auto& t : workers) t.join();
+    if (p.pause) return;
+    if (error) std::rethrow_exception(error);
+    std::ofstream out(result, std::ios::binary | std::ios::trunc);
+    check(bool(out), "Cannot assemble output");
+    std::array<char, 65536> buffer;
+    for (const auto& part : parts) {
+        std::ifstream in(part, std::ios::binary);
+        check(bool(in), "Cannot read partial file");
+        while (!p.pause && in.read(buffer.data(), buffer.size()).gcount()) out.write(buffer.data(), in.gcount());
+        if (p.pause) return;
+        check(in.eof() && !in.bad() && bool(out), "Assembly failed");
+    }
+    out.close();
+    check(bool(out) && fs::file_size(result) == total, "Assembled file has incorrect length");
+}
+
+bool startsWith(const std::wstring& url, const wchar_t* prefix) {
+    const auto n = wcslen(prefix);
+    return url.size() >= n && _wcsnicmp(url.c_str(), prefix, n) == 0;
+}
+}
+
+bool download(const std::wstring& url, const fs::path& destination, unsigned connections, Progress& p) {
+    check(!fs::exists(destination), "Destination already exists");
+    p.total = p.received = 0;
+    auto stage = destination;
+    stage += L".odm-work";
+    // Hold an exclusive lock across all requests and assembly, including other processes.
+    fs::create_directory(stage);
+    const auto lockPath = stage / L"lock";
+    const auto lock = CreateFileW(lockPath.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
+                                  FILE_FLAG_DELETE_ON_CLOSE | FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(lock != INVALID_HANDLE_VALUE, "Destination is already being downloaded");
+    struct Unlock { HANDLE h; ~Unlock() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); } } guard{lock};
+    auto result = stage / L"result";
+    // Scheme dispatch mirrors the protocol prefixes IDM registers (re/FINDINGS.md:75).
+    if (startsWith(url, L"ftp://") || startsWith(url, L"ftps://")) downloadFtp(url, result, p);
+    else if (startsWith(url, L"mms://") || startsWith(url, L"mmsh://")) downloadMms(url, result, p);
+    else if (startsWith(url, L"rtmp://") || startsWith(url, L"rtmpt://") || startsWith(url, L"rtmpe://")) downloadRtmp(url, result, p);
+    else httpDownload(url, result, connections, p);
     if (p.pause) return false;
     check(MoveFileW(result.c_str(), destination.c_str()), "Cannot publish output (destination may already exist)");
     std::error_code ignored;
