@@ -1330,6 +1330,7 @@ int main(int argc, char** argv) {
     QApplication::setFont(QFont("Segoe UI", 10));
     app.setApplicationName("ODM");
     app.setApplicationDisplayName("Open Download Manager");
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/app.ico")));
 
     QStringList urls;
     QString output;

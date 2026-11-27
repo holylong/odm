@@ -1,12 +1,22 @@
-# ODM — Open Download Manager
+<p align="center">
+  <img src="docs/app-icon.png" width="112" alt="ODM icon">
+</p>
 
-A download manager with two independent editions in one repository: a native **Windows C++/Qt desktop app** in `cpp/`, and the original **Go/Web edition** at the repository root.
+<h1 align="center">ODM — Open Download Manager</h1>
 
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
-![Qt](https://img.shields.io/badge/Qt-6.8-41CD52?logo=qt&logoColor=white)
-![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
-![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)
-![Protocols](https://img.shields.io/badge/protocols-HTTP%20%C2%B7%20FTP%20%C2%B7%20MMS%20%C2%B7%20RTMP-2F6BFF)
+<p align="center">
+  A download manager with two independent editions in one repository: a native
+  <b>Windows C++/Qt desktop app</b> in <code>cpp/</code>, and the original
+  <b>Go/Web edition</b> at the repository root.
+</p>
+
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white">
+  <img alt="Qt" src="https://img.shields.io/badge/Qt-6.8-41CD52?logo=qt&logoColor=white">
+  <img alt="C++" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white">
+  <img alt="Protocols" src="https://img.shields.io/badge/protocols-HTTP%20%C2%B7%20FTP%20%C2%B7%20MMS%20%C2%B7%20RTMP-2F6BFF">
+</p>
 
 ![ODM desktop, light theme](docs/screenshots/ui-light.png)
 
